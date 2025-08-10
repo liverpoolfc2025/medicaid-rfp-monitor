@@ -518,5 +518,9 @@ if __name__ == '__main__':
     # Start the background scanning thread
     thread = threading.Thread(target=background_scanner, daemon=True)
     thread.start()
-    app.run(debug=True)
+    
+    # Get the port from the environment variable, defaulting to 5000 for local development
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
+
 
