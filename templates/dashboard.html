@@ -39,7 +39,7 @@
             </div>
         </header>
 
-        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
             <div class="bg-white p-6 rounded-lg shadow-md">
                 <h3 class="text-lg font-semibold text-gray-500">Total RFPs Found</h3>
                 <p id="total-rfps" class="mt-1 text-4xl font-bold text-gray-900">0</p>
@@ -51,6 +51,10 @@
             <div class="bg-white p-6 rounded-lg shadow-md">
                 <h3 class="text-lg font-semibold text-gray-500">Recent RFPs (30 Days)</h3>
                 <p id="recent-rfps" class="mt-1 text-4xl font-bold text-gray-900">0</p>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-gray-500">Unique Users</h3>
+                <p id="unique-users" class="mt-1 text-4xl font-bold text-gray-900">0</p>
             </div>
             <div class="bg-white p-6 rounded-lg shadow-md">
                 <h3 class="text-lg font-semibold text-gray-500">Last Scan</h3>
@@ -76,15 +80,27 @@
             const scanNowBtn = document.getElementById('scan-now-btn');
             const loadingSpinner = document.getElementById('loading-spinner');
             
-            async function fetchData() {
+            // Function to fetch both stats and RFP data
+            async function fetchAllData() {
                 try {
-                    const response = await fetch('/api/rfps');
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
+                    // Fetch RFPs
+                    const rfpsUrl = `${window.location.origin}/api/rfps`;
+                    const rfpsResponse = await fetch(rfpsUrl);
+                    if (!rfpsResponse.ok) {
+                        throw new Error(`HTTP error! status: ${rfpsResponse.status} from ${rfpsUrl}`);
                     }
-                    const data = await response.json();
-                    displayStats(data.stats, data.rfps.length);
-                    displayRFPs(data.rfps);
+                    const rfpsData = await rfpsResponse.json();
+                    displayRFPs(rfpsData.rfps);
+
+                    // Fetch Stats
+                    const statsUrl = `${window.location.origin}/api/stats`;
+                    const statsResponse = await fetch(statsUrl);
+                    if (!statsResponse.ok) {
+                        throw new Error(`HTTP error! status: ${statsResponse.status} from ${statsUrl}`);
+                    }
+                    const statsData = await statsResponse.json();
+                    displayStats(statsData.stats, rfpsData.rfps.length);
+
                 } catch (error) {
                     console.error('Error fetching data:', error);
                     document.getElementById('rfps-container').innerHTML = 
@@ -96,6 +112,7 @@
                 document.getElementById('total-rfps').textContent = stats.total_found || 0;
                 document.getElementById('states-monitored').textContent = stats.states_monitored || 0;
                 document.getElementById('recent-rfps').textContent = recentCount || 0;
+                document.getElementById('unique-users').textContent = stats.unique_users || 0;
                 
                 if (stats.last_scan) {
                     const lastScanTime = new Date(stats.last_scan);
@@ -144,10 +161,12 @@
                 loadingSpinner.classList.remove('hidden');
                 document.getElementById('rfps-container').innerHTML = '';
                 try {
-                    const response = await fetch('/api/scan');
+                    const url = `${window.location.origin}/api/scan`;
+                    console.log('Requesting manual scan from:', url);
+                    const response = await fetch(url);
                     const result = await response.json();
                     if (result.success) {
-                        await fetchData(); // Fetch and display the new data
+                        await fetchAllData(); // Fetch and display the new data
                     } else {
                         throw new Error(result.message);
                     }
@@ -161,7 +180,7 @@
             });
 
             // Initial data fetch
-            fetchData();
+            fetchAllData();
         });
     </script>
 </body>
