@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request, make_response
 import requests
 import json
 import os
@@ -11,6 +11,7 @@ import logging
 import concurrent.futures
 from urllib.parse import urljoin
 import re
+import uuid
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -284,13 +285,26 @@ class MedicaidRFPTracker:
         ]
         
         self.rfps_data = self.load_rfps_data()
+        self.unique_users = set() # In-memory set to track unique visitors.
     
     def load_rfps_data(self):
         """Load RFPs data from file, initializing if not present."""
         try:
             if os.path.exists(self.rfps_file):
                 with open(self.rfps_file, 'r') as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    # Convert found_date strings to datetime objects for comparison
+                    for rfp in data['rfps']:
+                        if 'found_date' in rfp:
+                            try:
+                                # Ensure timezone awareness
+                                if not rfp['found_date'].endswith('Z') and '+' not in rfp['found_date']:
+                                    rfp['found_date'] += '+00:00'
+                                datetime.fromisoformat(rfp['found_date'])
+                            except ValueError:
+                                # Fallback if format is unexpected
+                                rfp['found_date'] = datetime.now().isoformat()
+                    return data
         except Exception as e:
             logger.error(f"Error loading RFPs data: {e}")
         
@@ -303,13 +317,16 @@ class MedicaidRFPTracker:
                 'states_monitored': len(self.state_sites),
                 'last_scan': None,
                 'last_scan_duration': None,
-                'total_scans': 0
+                'total_scans': 0,
+                'unique_users': 0 # Added new field
             }
         }
-    
+
     def save_rfps_data(self):
-        """Save RFPs data to file"""
+        """Save RFPs data to file."""
         try:
+            # Ensure the stats dictionary has the unique_users key before saving
+            self.rfps_data['stats']['unique_users'] = len(self.unique_users)
             with open(self.rfps_file, 'w') as f:
                 json.dump(self.rfps_data, f, indent=2)
         except Exception as e:
@@ -511,22 +528,40 @@ tracker = MedicaidRFPTracker()
 # Web routes
 @app.route('/')
 def dashboard():
-    """Main dashboard page"""
-    return render_template('dashboard.html')
+    """Main dashboard page and user tracking."""
+    # Check for a user ID cookie
+    user_id = request.cookies.get('user_id')
+    if not user_id:
+        user_id = str(uuid.uuid4())
+    
+    # Add user to the set of unique users
+    tracker.unique_users.add(user_id)
+    
+    # Render the dashboard with a cookie
+    resp = make_response(render_template('dashboard.html'))
+    resp.set_cookie('user_id', user_id, max_age=365 * 24 * 60 * 60) # Cookie lasts one year
+    return resp
 
 @app.route('/api/rfps')
 def get_rfps():
-    """API endpoint to get RFPs data"""
+    """API endpoint to get RFPs data."""
     recent_rfps = tracker.get_recent_rfps(30)
     return jsonify({
         'rfps': recent_rfps,
+    })
+    
+@app.route('/api/stats')
+def get_stats():
+    """New API endpoint to get dashboard stats, including user count."""
+    tracker.rfps_data['stats']['unique_users'] = len(tracker.unique_users)
+    return jsonify({
         'stats': tracker.rfps_data['stats'],
         'last_updated': tracker.rfps_data['last_updated']
     })
 
 @app.route('/api/scan')
 def manual_scan():
-    """Trigger a manual scan"""
+    """Trigger a manual scan."""
     try:
         new_rfps = tracker.search_for_medicaid_rfps()
         return jsonify({
@@ -541,7 +576,7 @@ def manual_scan():
         })
 
 def background_scanner():
-    """Background thread to scan for RFPs periodically"""
+    """Background thread to scan for RFPs periodically."""
     schedule.every(6).hours.do(tracker.search_for_medicaid_rfps)
     
     tracker.search_for_medicaid_rfps()
@@ -563,4 +598,3 @@ if __name__ == '__main__':
     thread = threading.Thread(target=background_scanner, daemon=True)
     thread.start()
     app.run(host='0.0.0.0', port=port, debug=True)
-
