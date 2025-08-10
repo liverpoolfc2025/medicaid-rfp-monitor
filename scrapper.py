@@ -18,9 +18,8 @@ app = Flask(__name__)
 class MedicaidRFPTracker:
     def __init__(self):
         self.rfps_file = 'rfps_data.json'
-        self.rfps_data = self.load_rfps_data()
         
-        # Sources to monitor - All 50 States + NASPO
+        # Sources to monitor - All 50 States + NASPO (define before loading data)
         self.state_sites = [
             # NASPO ValuePoint (Multi-State)
             {
@@ -280,6 +279,9 @@ class MedicaidRFPTracker:
                 'name': 'Wyoming A&I'
             }
         ]
+        
+        # Load data after state_sites is defined
+        self.rfps_data = self.load_rfps_data()
     
     def load_rfps_data(self):
         """Load RFPs data from file"""
