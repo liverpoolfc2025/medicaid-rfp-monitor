@@ -373,9 +373,7 @@ class MedicaidRFPTracker:
         
         try:
             response = requests.get(site['url'], headers=headers, timeout=7, allow_redirects=True)
-            if response.status_code != 200:
-                logger.warning(f"Failed to access main page for {site['name']}: Status {response.status_code}")
-                return new_rfps
+            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
             
             soup = BeautifulSoup(response.text, 'html.parser')
             main_page_content = soup.get_text().lower()
@@ -396,26 +394,26 @@ class MedicaidRFPTracker:
                         full_url = urljoin(site['url'], a_tag['href'])
                         try:
                             rfp_response = requests.get(full_url, headers=headers, timeout=5)
-                            if rfp_response.status_code == 200:
-                                rfp_soup = BeautifulSoup(rfp_response.text, 'html.parser')
-                                rfp_content = rfp_soup.get_text().lower()
+                            rfp_response.raise_for_status()
+                            rfp_soup = BeautifulSoup(rfp_response.text, 'html.parser')
+                            rfp_content = rfp_soup.get_text().lower()
+                            
+                            # Check for keywords on the deeper page
+                            if any(kw in rfp_content for kw in medicaid_keywords):
+                                potential_rfp_url = full_url
                                 
-                                # Check for keywords on the deeper page
-                                if any(kw in rfp_content for kw in medicaid_keywords):
-                                    potential_rfp_url = full_url
+                                # Extract title
+                                title_tag = rfp_soup.find(['h1', 'h2', 'title'])
+                                if title_tag:
+                                    found_title = title_tag.get_text(strip=True)
+                                
+                                # Extract RFP number using regex
+                                rfp_number_match = re.search(r'(RFP|BID|SOLICITATION)[\s-]?(\d{2,}-\d{3,}|\d{3,})', rfp_content, re.I)
+                                if rfp_number_match:
+                                    found_rfp_number = rfp_number_match.group(0).upper().strip()
                                     
-                                    # Extract title
-                                    title_tag = rfp_soup.find(['h1', 'h2', 'title'])
-                                    if title_tag:
-                                        found_title = title_tag.get_text(strip=True)
-                                    
-                                    # Extract RFP number using regex
-                                    rfp_number_match = re.search(r'(RFP|BID|SOLICITATION)[\s-]?(\d{2,}-\d{3,}|\d{3,})', rfp_content, re.I)
-                                    if rfp_number_match:
-                                        found_rfp_number = rfp_number_match.group(0).upper().strip()
-                                        
-                                    logger.info(f"Found specific RFP link for {site['name']}: {potential_rfp_url}")
-                                    break
+                                logger.info(f"Found specific RFP link for {site['name']}: {potential_rfp_url}")
+                                break
                         except (requests.exceptions.RequestException, Exception) as e:
                             logger.debug(f"Could not check link {full_url}: {e}")
 
@@ -437,12 +435,14 @@ class MedicaidRFPTracker:
                     new_rfps.append(rfp)
                     logger.info(f"Found RFP opportunity on {site['name']}")
         
+        except requests.exceptions.HTTPError as e:
+            logger.warning(f"HTTP error for {site['name']}: {e}")
         except requests.exceptions.Timeout:
             logger.warning(f"Timeout checking {site['name']}")
         except requests.exceptions.RequestException as e:
             logger.warning(f"Request error checking {site['name']}: {str(e)}")
         except Exception as e:
-            logger.warning(f"Error checking {site['name']}: {str(e)}")
+            logger.warning(f"Unexpected error checking {site['name']}: {str(e)}")
             
         return new_rfps
     
@@ -570,15 +570,17 @@ def manual_scan():
             'new_rfps': len(new_rfps)
         })
     except Exception as e:
+        logger.error(f"Error during manual scan: {str(e)}")
         return jsonify({
             'success': False,
-            'message': f"Scan failed: {str(e)}"
-        })
+            'message': f"Scan failed: {str(e)}. Please check server logs for details."
+        }), 500 # Return a 500 status code to indicate a server error
 
 def background_scanner():
     """Background thread to scan for RFPs periodically."""
     schedule.every(6).hours.do(tracker.search_for_medicaid_rfps)
     
+    # Run a scan on startup
     tracker.search_for_medicaid_rfps()
     
     while True:
