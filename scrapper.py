@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 import schedule
 import logging
 import concurrent.futures
+from urllib.parse import urljoin
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -315,52 +316,76 @@ class MedicaidRFPTracker:
     
     def scrape_site(self, site):
         """
-        Function to scrape a single site for RFPs.
-        This is designed to be run in parallel by ThreadPoolExecutor.
+        Function to scrape a single site for specific RFPs.
+        This now attempts to find a direct RFP link.
         """
         logger.info(f"Checking {site['name']} ({site['state']})...")
         
         new_rfps = []
-        medicaid_keywords = ['medicaid', 'managed care', 'health plan', 'healthcare services', 'medical assistance']
-        # Set of existing RFP IDs for quick lookup
+        # Updated and more specific keywords
+        medicaid_keywords = ['hcbs', 'ltss', 'behavioral health', 'home and community-based services', 'long-term services and supports']
         existing_ids = {r['id'] for r in self.rfps_data['rfps']}
-
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        }
+        
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'Connection': 'keep-alive',
-            }
-            
-            # Use a slightly shorter timeout for better efficiency on a free tier
+            # First, check the main procurement page for links
             response = requests.get(site['url'], headers=headers, timeout=7, allow_redirects=True)
+            if response.status_code != 200:
+                logger.warning(f"Failed to access main page for {site['name']}: Status {response.status_code}")
+                return new_rfps
             
-            if response.status_code == 200:
-                content = response.text.lower()
-                
-                found_keywords = [keyword for keyword in medicaid_keywords if keyword in content]
-                
-                if found_keywords:
-                    # Create a more robust ID based on state and keywords to avoid duplicates.
-                    # A more advanced approach would be to parse the page for unique RFP IDs.
-                    rfp_id = f"{site['state'].lower().replace(' ', '_')}_{'_'.join(found_keywords)}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # Look for keywords on the main page for a simple check
+            main_page_content = soup.get_text().lower()
+            found_keywords = [keyword for keyword in medicaid_keywords if keyword in main_page_content]
 
-                    if rfp_id not in existing_ids:
-                        rfp = {
-                            'id': rfp_id,
-                            'title': f"Healthcare RFP Opportunity - {site['state']}",
-                            'state': site['state'],
-                            'source': site['name'],
-                            'url': site['url'],
-                            'found_date': datetime.now().isoformat(),
-                            'keywords_found': found_keywords,
-                            'status': 'Active',
-                            'description': f"Healthcare procurement opportunity detected on {site['name']}. Keywords found: {', '.join(found_keywords)}"
-                        }
-                        new_rfps.append(rfp)
-                        logger.info(f"Found RFP opportunity on {site['name']}")
+            # If keywords are found, try to find a more specific link
+            if found_keywords:
+                potential_rfp_url = site['url'] # Default to main URL
+                
+                # Search for links that look like RFPs
+                link_keywords = ['rfp', 'solicitation', 'bid', 'opportunity', 'proposal', 'procurement']
+                for a_tag in soup.find_all('a', href=True):
+                    link_text = a_tag.get_text().lower()
+                    link_href = a_tag['href'].lower()
+                    
+                    if any(kw in link_text or kw in link_href for kw in link_keywords):
+                        full_url = urljoin(site['url'], a_tag['href'])
+                        try:
+                            # Make a second request to the potential RFP page
+                            rfp_response = requests.get(full_url, headers=headers, timeout=5)
+                            if rfp_response.status_code == 200:
+                                rfp_soup = BeautifulSoup(rfp_response.text, 'html.parser')
+                                rfp_content = rfp_soup.get_text().lower()
+                                
+                                # Check if our specific keywords are on this deeper page
+                                if any(kw in rfp_content for kw in medicaid_keywords):
+                                    potential_rfp_url = full_url
+                                    logger.info(f"Found specific RFP link for {site['name']}: {potential_rfp_url}")
+                                    break # We found a good one, no need to check other links
+
+                        except (requests.exceptions.RequestException, Exception) as e:
+                            logger.debug(f"Could not check link {full_url}: {e}")
+
+                rfp_id = f"{site['state'].lower().replace(' ', '_')}_{hash(potential_rfp_url)}"
+                
+                if rfp_id not in existing_ids:
+                    rfp = {
+                        'id': rfp_id,
+                        'title': f"Healthcare Opportunity - {site['state']}",
+                        'state': site['state'],
+                        'source': site['name'],
+                        'url': potential_rfp_url, # Use the specific URL we found
+                        'found_date': datetime.now().isoformat(),
+                        'keywords_found': found_keywords,
+                        'status': 'Active',
+                        'description': f"Healthcare procurement opportunity detected on {site['name']}. Keywords found: {', '.join(found_keywords)}"
+                    }
+                    new_rfps.append(rfp)
+                    logger.info(f"Found RFP opportunity on {site['name']}")
         
         except requests.exceptions.Timeout:
             logger.warning(f"Timeout checking {site['name']}")
@@ -382,25 +407,25 @@ class MedicaidRFPTracker:
         demo_rfps = [
             {
                 'id': f'demo_ca_medicaid_{datetime.now().strftime("%Y%m%d_%H%M")}',
-                'title': 'California Medicaid Managed Care Services',
+                'title': 'California Medicaid HCBS Services',
                 'state': 'California',
                 'source': 'Cal eProcure',
                 'url': 'https://www.caleprocure.ca.gov',
                 'found_date': datetime.now().isoformat(),
-                'keywords_found': ['medicaid', 'managed care'],
+                'keywords_found': ['hcbs', 'managed care'],
                 'status': 'Active',
-                'description': 'Comprehensive managed care services for Medicaid beneficiaries in California.'
+                'description': 'Comprehensive managed care services for HCBS beneficiaries in California.'
             },
             {
                 'id': f'demo_naspo_health_{datetime.now().strftime("%Y%m%d_%H%M")}',
-                'title': 'NASPO Multi-State Health Plan Services',
+                'title': 'NASPO Multi-State Behavioral Health Plan Services',
                 'state': 'NASPO',
                 'source': 'NASPO ValuePoint',
                 'url': 'https://www.naspovaluepoint.org',
                 'found_date': datetime.now().isoformat(),
-                'keywords_found': ['health plan', 'managed care'],
+                'keywords_found': ['behavioral health'],
                 'status': 'Active',
-                'description': 'Multi-state cooperative purchasing opportunity for health plan administration services.'
+                'description': 'Multi-state cooperative purchasing opportunity for behavioral health plan administration services.'
             }
         ]
         
@@ -410,7 +435,6 @@ class MedicaidRFPTracker:
                 new_rfps.append(demo_rfp)
         
         # Use ThreadPoolExecutor for parallel scanning of all state sites.
-        # This is a major optimization to prevent timeouts on free hosting tiers.
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             futures = [executor.submit(self.scrape_site, site) for site in self.state_sites]
             
@@ -515,12 +539,10 @@ if not os.path.exists(templates_dir):
 
 # Main entry point
 if __name__ == '__main__':
+    # Get the port from the environment variable, defaulting to 5000 for local development
+    port = int(os.environ.get("PORT", 5000))
     # Start the background scanning thread
     thread = threading.Thread(target=background_scanner, daemon=True)
     thread.start()
-    
-    # Get the port from the environment variable, defaulting to 5000 for local development
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
-
+    app.run(host='0.0.0.0', port=port, debug=True)
 
