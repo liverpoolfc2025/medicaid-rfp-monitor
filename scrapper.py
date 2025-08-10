@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 import schedule
 import logging
+import concurrent.futures
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -280,11 +281,10 @@ class MedicaidRFPTracker:
             }
         ]
         
-        # Load data after state_sites is defined
         self.rfps_data = self.load_rfps_data()
     
     def load_rfps_data(self):
-        """Load RFPs data from file"""
+        """Load RFPs data from file, initializing if not present."""
         try:
             if os.path.exists(self.rfps_file):
                 with open(self.rfps_file, 'r') as f:
@@ -292,13 +292,16 @@ class MedicaidRFPTracker:
         except Exception as e:
             logger.error(f"Error loading RFPs data: {e}")
         
+        # Initialize default structure if file is not found or corrupted
         return {
             'last_updated': datetime.now().isoformat(),
             'rfps': [],
             'stats': {
                 'total_found': 0,
                 'states_monitored': len(self.state_sites),
-                'last_scan': None
+                'last_scan': None,
+                'last_scan_duration': None,
+                'total_scans': 0
             }
         }
     
@@ -310,14 +313,72 @@ class MedicaidRFPTracker:
         except Exception as e:
             logger.error(f"Error saving RFPs data: {e}")
     
-    def search_for_medicaid_rfps(self):
-        """Search all sources for Medicaid RFPs"""
-        logger.info("Starting Medicaid RFP search...")
+    def scrape_site(self, site):
+        """
+        Function to scrape a single site for RFPs.
+        This is designed to be run in parallel by ThreadPoolExecutor.
+        """
+        logger.info(f"Checking {site['name']} ({site['state']})...")
         
         new_rfps = []
         medicaid_keywords = ['medicaid', 'managed care', 'health plan', 'healthcare services', 'medical assistance']
+        # Set of existing RFP IDs for quick lookup
+        existing_ids = {r['id'] for r in self.rfps_data['rfps']}
+
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+            }
+            
+            # Use a slightly shorter timeout for better efficiency on a free tier
+            response = requests.get(site['url'], headers=headers, timeout=7, allow_redirects=True)
+            
+            if response.status_code == 200:
+                content = response.text.lower()
+                
+                found_keywords = [keyword for keyword in medicaid_keywords if keyword in content]
+                
+                if found_keywords:
+                    # Create a more robust ID based on state and keywords to avoid duplicates.
+                    # A more advanced approach would be to parse the page for unique RFP IDs.
+                    rfp_id = f"{site['state'].lower().replace(' ', '_')}_{'_'.join(found_keywords)}_{datetime.now().strftime('%Y%m%d_%H%M')}"
+
+                    if rfp_id not in existing_ids:
+                        rfp = {
+                            'id': rfp_id,
+                            'title': f"Healthcare RFP Opportunity - {site['state']}",
+                            'state': site['state'],
+                            'source': site['name'],
+                            'url': site['url'],
+                            'found_date': datetime.now().isoformat(),
+                            'keywords_found': found_keywords,
+                            'status': 'Active',
+                            'description': f"Healthcare procurement opportunity detected on {site['name']}. Keywords found: {', '.join(found_keywords)}"
+                        }
+                        new_rfps.append(rfp)
+                        logger.info(f"Found RFP opportunity on {site['name']}")
         
-        # Add some demo RFPs first to ensure the system works
+        except requests.exceptions.Timeout:
+            logger.warning(f"Timeout checking {site['name']}")
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Request error checking {site['name']}: {str(e)}")
+        except Exception as e:
+            logger.warning(f"Error checking {site['name']}: {str(e)}")
+            
+        return new_rfps
+
+    def search_for_medicaid_rfps(self):
+        """Search all sources for Medicaid RFPs using parallel processing"""
+        logger.info("Starting Medicaid RFP search...")
+        start_time = time.time()
+        
+        new_rfps = []
+        
+        # Add demo RFPs for functionality check
         demo_rfps = [
             {
                 'id': f'demo_ca_medicaid_{datetime.now().strftime("%Y%m%d_%H%M")}',
@@ -343,94 +404,37 @@ class MedicaidRFPTracker:
             }
         ]
         
-        # Check if these demo RFPs already exist
-        existing_ids = [r['id'] for r in self.rfps_data['rfps']]
+        existing_ids = {r['id'] for r in self.rfps_data['rfps']}
         for demo_rfp in demo_rfps:
             if demo_rfp['id'] not in existing_ids:
                 new_rfps.append(demo_rfp)
         
-        # Try to scan a few key state sites (limited to avoid timeouts)
-        key_sites = [
-            {
-                'state': 'NASPO',
-                'url': 'https://www.naspovaluepoint.org',
-                'name': 'NASPO ValuePoint'
-            },
-            {
-                'state': 'California',
-                'url': 'https://www.caleprocure.ca.gov',
-                'name': 'Cal eProcure'
-            },
-            {
-                'state': 'Texas', 
-                'url': 'https://www.txsmartbuy.com',
-                'name': 'Texas SmartBuy'
-            }
-        ]
-        
-        for site in key_sites:
-            try:
-                logger.info(f"Checking {site['name']} ({site['state']})...")
-                
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.5',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'Connection': 'keep-alive',
-                }
-                
-                # Quick check with short timeout
-                response = requests.get(site['url'], headers=headers, timeout=10, allow_redirects=True)
-                
-                if response.status_code == 200:
-                    # Simple text search for keywords
-                    content = response.text.lower()
-                    
-                    found_keywords = []
-                    for keyword in medicaid_keywords:
-                        if keyword in content:
-                            found_keywords.append(keyword)
-                    
-                    if found_keywords:
-                        rfp_id = f"{site['state'].lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d_%H%M')}"
-                        
-                        if rfp_id not in existing_ids:
-                            rfp = {
-                                'id': rfp_id,
-                                'title': f"Healthcare RFP Opportunity - {site['state']}",
-                                'state': site['state'],
-                                'source': site['name'],
-                                'url': site['url'],
-                                'found_date': datetime.now().isoformat(),
-                                'keywords_found': found_keywords,
-                                'status': 'Active',
-                                'description': f"Healthcare procurement opportunity detected on {site['name']}. Keywords found: {', '.join(found_keywords)}"
-                            }
-                            new_rfps.append(rfp)
-                            logger.info(f"Found RFP opportunity on {site['name']}")
-                
-                # Small delay between requests
-                time.sleep(1)
-                
-            except requests.exceptions.Timeout:
-                logger.warning(f"Timeout checking {site['name']}")
-                continue
-            except requests.exceptions.RequestException as e:
-                logger.warning(f"Request error checking {site['name']}: {str(e)}")
-                continue
-            except Exception as e:
-                logger.warning(f"Error checking {site['name']}: {str(e)}")
-                continue
-        
+        # Use ThreadPoolExecutor for parallel scanning of all state sites.
+        # This is a major optimization to prevent timeouts on free hosting tiers.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [executor.submit(self.scrape_site, site) for site in self.state_sites]
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    result = future.result()
+                    if result:
+                        new_rfps.extend(result)
+                except Exception as e:
+                    logger.error(f"A thread generated an exception: {e}")
+
         # Add new RFPs to our data
         for rfp in new_rfps:
             self.rfps_data['rfps'].append(rfp)
         
         # Update stats
         self.rfps_data['stats']['total_found'] = len(self.rfps_data['rfps'])
+        self.rfps_data['stats']['states_monitored'] = len(self.state_sites)
         self.rfps_data['stats']['last_scan'] = datetime.now().isoformat()
         self.rfps_data['last_updated'] = datetime.now().isoformat()
+        self.rfps_data['stats']['total_scans'] += 1
+        
+        end_time = time.time()
+        self.rfps_data['stats']['last_scan_duration'] = round(end_time - start_time, 2)
         
         # Keep only last 100 RFPs to prevent file from getting too large
         if len(self.rfps_data['rfps']) > 100:
@@ -438,7 +442,7 @@ class MedicaidRFPTracker:
         
         self.save_rfps_data()
         
-        logger.info(f"Scan completed. Found {len(new_rfps)} new RFPs. Total: {len(self.rfps_data['rfps'])}")
+        logger.info(f"Scan completed. Found {len(new_rfps)} new RFPs. Total: {len(self.rfps_data['rfps'])}. Duration: {self.rfps_data['stats']['last_scan_duration']}s")
         
         return new_rfps
     
@@ -449,11 +453,12 @@ class MedicaidRFPTracker:
         
         for rfp in self.rfps_data['rfps']:
             try:
+                # Use replace to handle timezones, making it compatible with Python 3.11
                 rfp_date = datetime.fromisoformat(rfp['found_date'].replace('Z', '+00:00'))
                 if rfp_date.replace(tzinfo=None) > cutoff_date:
                     recent_rfps.append(rfp)
             except:
-                # Include RFPs with invalid dates
+                # Fallback for old/malformed date formats
                 recent_rfps.append(rfp)
         
         return sorted(recent_rfps, key=lambda x: x['found_date'], reverse=True)
@@ -497,7 +502,6 @@ def background_scanner():
     """Background thread to scan for RFPs periodically"""
     schedule.every(6).hours.do(tracker.search_for_medicaid_rfps)
     
-    # Run initial scan
     tracker.search_for_medicaid_rfps()
     
     while True:
@@ -509,180 +513,10 @@ templates_dir = 'templates'
 if not os.path.exists(templates_dir):
     os.makedirs(templates_dir)
 
-# HTML template for the dashboard
-dashboard_html = '''<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Medicaid RFP Monitor</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f5f5f5; }
-        .header { background: #2c3e50; color: white; padding: 1rem; text-align: center; }
-        .header h1 { margin-bottom: 0.5rem; }
-        .stats { display: flex; justify-content: center; gap: 2rem; margin: 1rem 0; flex-wrap: wrap; }
-        .stat { background: white; padding: 1rem; border-radius: 8px; text-align: center; min-width: 150px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .stat-number { font-size: 2rem; font-weight: bold; color: #3498db; }
-        .stat-label { color: #666; margin-top: 0.5rem; }
-        .controls { text-align: center; margin: 1rem 0; }
-        .btn { background: #3498db; color: white; padding: 0.75rem 1.5rem; border: none; border-radius: 5px; cursor: pointer; font-size: 1rem; }
-        .btn:hover { background: #2980b9; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 0 1rem; }
-        .rfps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 1rem; margin-top: 1rem; }
-        .rfp-card { background: white; border-radius: 8px; padding: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); border-left: 4px solid #3498db; }
-        .rfp-title { font-size: 1.1rem; font-weight: bold; margin-bottom: 0.5rem; color: #2c3e50; }
-        .rfp-meta { color: #666; font-size: 0.9rem; margin-bottom: 0.5rem; }
-        .rfp-description { color: #444; line-height: 1.4; margin-bottom: 1rem; }
-        .rfp-keywords { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-        .keyword { background: #ecf0f1; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; color: #555; }
-        .rfp-link { color: #3498db; text-decoration: none; font-weight: 500; }
-        .rfp-link:hover { text-decoration: underline; }
-        .loading { text-align: center; padding: 2rem; color: #666; }
-        .no-rfps { text-align: center; padding: 3rem; color: #666; }
-        .last-updated { text-align: center; color: #666; font-size: 0.9rem; margin-top: 1rem; }
-        @media (max-width: 768px) { .stats { flex-direction: column; align-items: center; } .rfps-grid { grid-template-columns: 1fr; } }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>🏥 Medicaid RFP Monitor</h1>
-        <p>Real-time tracking of Medicaid and healthcare procurement opportunities</p>
-    </div>
+# Main entry point
+if __name__ == '__main__':
+    # Start the background scanning thread
+    thread = threading.Thread(target=background_scanner, daemon=True)
+    thread.start()
+    app.run(debug=True)
 
-    <div class="container">
-        <div class="stats" id="stats">
-            <div class="stat">
-                <div class="stat-number" id="total-rfps">-</div>
-                <div class="stat-label">Total RFPs Found</div>
-            </div>
-            <div class="stat">
-                <div class="stat-number" id="states-monitored">-</div>
-                <div class="stat-label">States Monitored</div>
-            </div>
-            <div class="stat">
-                <div class="stat-number" id="recent-rfps">-</div>
-                <div class="stat-label">Last 30 Days</div>
-            </div>
-        </div>
-
-        <div class="controls">
-            <button class="btn" onclick="manualScan()" id="scan-btn">🔄 Scan Now</button>
-            <button class="btn" onclick="refreshData()" style="background: #27ae60;">📊 Refresh Data</button>
-        </div>
-
-        <div id="rfps-container">
-            <div class="loading">Loading RFPs...</div>
-        </div>
-
-        <div class="last-updated" id="last-updated"></div>
-    </div>
-
-    <script>
-        let isScanning = false;
-
-        async function loadRFPs() {
-            try {
-                const response = await fetch('/api/rfps');
-                const data = await response.json();
-                
-                displayStats(data.stats, data.rfps.length);
-                displayRFPs(data.rfps);
-                displayLastUpdated(data.last_updated);
-            } catch (error) {
-                document.getElementById('rfps-container').innerHTML = 
-                    '<div class="no-rfps">Error loading RFPs. Please try again.</div>';
-            }
-        }
-
-        function displayStats(stats, recentCount) {
-            document.getElementById('total-rfps').textContent = stats.total_found || 0;
-            document.getElementById('states-monitored').textContent = stats.states_monitored || 0;
-            document.getElementById('recent-rfps').textContent = recentCount || 0;
-        }
-
-        function displayRFPs(rfps) {
-            const container = document.getElementById('rfps-container');
-            
-            if (rfps.length === 0) {
-                container.innerHTML = '<div class="no-rfps">No RFPs found yet. Click "Scan Now" to search for opportunities.</div>';
-                return;
-            }
-
-            const rfpsHtml = rfps.map(rfp => `
-                <div class="rfp-card">
-                    <div class="rfp-title">${rfp.title}</div>
-                    <div class="rfp-meta">
-                        📍 ${rfp.state} • 🏢 ${rfp.source} • 📅 ${new Date(rfp.found_date).toLocaleDateString()}
-                    </div>
-                    <div class="rfp-description">${rfp.description}</div>
-                    <div class="rfp-keywords">
-                        ${rfp.keywords_found.map(keyword => `<span class="keyword">${keyword}</span>`).join('')}
-                    </div>
-                    <a href="${rfp.url}" target="_blank" class="rfp-link">View Opportunity →</a>
-                </div>
-            `).join('');
-
-            container.innerHTML = `<div class="rfps-grid">${rfpsHtml}</div>`;
-        }
-
-        function displayLastUpdated(lastUpdated) {
-            if (lastUpdated) {
-                const date = new Date(lastUpdated);
-                document.getElementById('last-updated').textContent = 
-                    `Last updated: ${date.toLocaleString()}`;
-            }
-        }
-
-        async function manualScan() {
-            if (isScanning) return;
-            
-            isScanning = true;
-            const btn = document.getElementById('scan-btn');
-            btn.textContent = '⏳ Scanning...';
-            btn.disabled = true;
-
-            try {
-                const response = await fetch('/api/scan');
-                const result = await response.json();
-                
-                if (result.success) {
-                    alert(`Scan completed! Found ${result.new_rfps} new RFPs.`);
-                    loadRFPs(); // Refresh the display
-                } else {
-                    alert(`Scan failed: ${result.message}`);
-                }
-            } catch (error) {
-                alert('Scan failed. Please try again.');
-            }
-
-            btn.textContent = '🔄 Scan Now';
-            btn.disabled = false;
-            isScanning = false;
-        }
-
-        function refreshData() {
-            loadRFPs();
-        }
-
-        // Auto-refresh every 5 minutes
-        setInterval(loadRFPs, 5 * 60 * 1000);
-
-        // Load initial data
-        loadRFPs();
-    </script>
-</body>
-</html>'''
-
-# Write the template file
-with open(os.path.join(templates_dir, 'dashboard.html'), 'w') as f:
-    f.write(dashboard_html)
-
-if __name__ == "__main__":
-    # Start background scanner in a separate thread
-    scanner_thread = threading.Thread(target=background_scanner, daemon=True)
-    scanner_thread.start()
-    
-    # Start the web server
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
