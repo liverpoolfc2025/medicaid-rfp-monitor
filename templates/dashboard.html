@@ -3,176 +3,166 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Medicaid RFP Monitor</title>
+    <title>Medicaid RFP Tracker Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap');
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Poppins', sans-serif; background: #f0f2f5; color: #333; }
-        .header { background: #4a69bd; color: white; padding: 2rem 1rem; text-align: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
-        .header h1 { font-weight: 700; font-size: 2.5rem; margin-bottom: 0.5rem; }
-        .header p { font-weight: 300; font-size: 1.1rem; }
-        .stats { display: flex; justify-content: center; gap: 1.5rem; margin: 2rem 0; flex-wrap: wrap; }
-        .stat { background: white; padding: 1.5rem; border-radius: 12px; text-align: center; min-width: 200px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-left: 5px solid #4a69bd; transition: transform 0.2s ease-in-out; }
-        .stat:hover { transform: translateY(-5px); }
-        .stat-number { font-size: 2.5rem; font-weight: 700; color: #4a69bd; }
-        .stat-label { color: #666; margin-top: 0.5rem; font-weight: 400; }
-        .controls { text-align: center; margin: 1.5rem 0; display: flex; justify-content: center; gap: 1rem; }
-        .btn { padding: 0.75rem 1.75rem; border: none; border-radius: 8px; cursor: pointer; font-size: 1rem; font-weight: 600; transition: background-color 0.2s ease-in-out; }
-        .btn-primary { background: #4a69bd; color: white; }
-        .btn-primary:hover { background: #3b5093; }
-        .btn-secondary { background: #27ae60; color: white; }
-        .btn-secondary:hover { background: #229954; }
-        .container { max-width: 1200px; margin: 0 auto; padding: 0 1rem; }
-        .rfps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 1.5rem; margin-top: 2rem; }
-        .rfp-card { background: white; border-radius: 12px; padding: 1.5rem; box-shadow: 0 4px 12px rgba(0,0,0,0.08); border-left: 5px solid #4a69bd; transition: transform 0.2s ease-in-out; }
-        .rfp-card:hover { transform: translateY(-3px); }
-        .rfp-title { font-size: 1.2rem; font-weight: 600; margin-bottom: 0.5rem; color: #333; }
-        .rfp-meta { color: #888; font-size: 0.9rem; margin-bottom: 0.75rem; }
-        .rfp-description { color: #555; line-height: 1.6; margin-bottom: 1.2rem; }
-        .rfp-keywords { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
-        .keyword { background: #e9ecef; padding: 0.3rem 0.6rem; border-radius: 5px; font-size: 0.8rem; color: #666; font-weight: 400; }
-        .rfp-link { color: #4a69bd; text-decoration: none; font-weight: 600; }
-        .rfp-link:hover { text-decoration: underline; }
-        .loading, .no-rfps { text-align: center; padding: 3rem; color: #888; font-size: 1.2rem; }
-        .last-updated { text-align: center; color: #666; font-size: 0.9rem; margin-top: 2rem; }
-        @media (max-width: 768px) { .stats { flex-direction: column; align-items: center; } .rfps-grid { grid-template-columns: 1fr; } }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6;
+        }
+        .rfp-card {
+            background-color: white;
+            border-left: 4px solid #3b82f6;
+        }
+        .keyword {
+            background-color: #e0f2fe;
+            color: #0c4a6e;
+        }
+        .status-active {
+            background-color: #d1fae5;
+            color: #065f46;
+        }
     </style>
 </head>
-<body>
-    <div class="header">
-        <h1>🏥 Medicaid RFP Monitor</h1>
-        <p>Real-time tracking of Medicaid and healthcare procurement opportunities</p>
-    </div>
+<body class="bg-gray-100 min-h-screen">
+    <div class="container mx-auto p-4 sm:p-8">
+        <header class="flex flex-col sm:flex-row justify-between items-center bg-white p-6 sm:p-8 rounded-lg shadow-md mb-6">
+            <div class="mb-4 sm:mb-0 text-center sm:text-left">
+                <h1 class="text-3xl font-bold text-gray-800">Medicaid RFP Tracker</h1>
+                <p class="text-gray-500">Monitor new Home and Community-Based Services (HCBS), Long-Term Services and Supports (LTSS), and Behavioral Health opportunities.</p>
+            </div>
+            <div class="flex flex-col sm:flex-row space-y-2 sm:space-y-0 sm:space-x-4">
+                <button id="scan-now-btn" class="bg-blue-600 text-white font-semibold py-2 px-6 rounded-md shadow-lg hover:bg-blue-700 transition duration-300">
+                    Scan Now
+                </button>
+            </div>
+        </header>
 
-    <div class="container">
-        <div class="stats" id="stats">
-            <div class="stat">
-                <div class="stat-number" id="total-rfps">-</div>
-                <div class="stat-label">Total RFPs Found</div>
+        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-gray-500">Total RFPs Found</h3>
+                <p id="total-rfps" class="mt-1 text-4xl font-bold text-gray-900">0</p>
             </div>
-            <div class="stat">
-                <div class="stat-number" id="states-monitored">-</div>
-                <div class="stat-label">States Monitored</div>
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-gray-500">States Monitored</h3>
+                <p id="states-monitored" class="mt-1 text-4xl font-bold text-gray-900">0</p>
             </div>
-            <div class="stat">
-                <div class="stat-number" id="recent-rfps">-</div>
-                <div class="stat-label">Last 30 Days</div>
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-gray-500">Recent RFPs (30 Days)</h3>
+                <p id="recent-rfps" class="mt-1 text-4xl font-bold text-gray-900">0</p>
             </div>
-            <div class="stat">
-                <div class="stat-number" id="total-scans">-</div>
-                <div class="stat-label">Total Scans Run</div>
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h3 class="text-lg font-semibold text-gray-500">Last Scan</h3>
+                <p id="last-scan-time" class="mt-1 text-lg font-semibold text-gray-900">-</p>
+                <p id="last-scan-duration" class="mt-1 text-sm text-gray-500">-</p>
             </div>
-            <div class="stat">
-                <div class="stat-number" id="scan-duration">-</div>
-                <div class="stat-label">Last Scan Duration (s)</div>
-            </div>
-        </div>
+        </section>
 
-        <div class="controls">
-            <button class="btn btn-primary" onclick="manualScan()" id="scan-btn">🔄 Scan Now</button>
-            <button class="btn btn-secondary" onclick="refreshData()" id="refresh-btn">📊 Refresh Data</button>
-        </div>
+        <section class="bg-white p-6 rounded-lg shadow-md">
+            <div id="loading-spinner" class="text-center py-10 hidden">
+                <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-blue-500 mx-auto"></div>
+                <p class="mt-4 text-gray-500">Scanning for new RFPs...</p>
+            </div>
+            <div id="rfps-container" class="space-y-4">
+                <!-- RFP cards will be injected here -->
+            </div>
+        </section>
 
-        <div id="rfps-container">
-            <div class="loading">Loading RFPs...</div>
-        </div>
-
-        <div class="last-updated" id="last-updated"></div>
     </div>
 
     <script>
-        let isScanning = false;
-
-        async function loadRFPs() {
-            document.getElementById('rfps-container').innerHTML = '<div class="loading">Loading RFPs...</div>';
-            try {
-                const response = await fetch('/api/rfps');
-                const data = await response.json();
-                
-                displayStats(data.stats, data.rfps.length);
-                displayRFPs(data.rfps);
-                displayLastUpdated(data.last_updated);
-            } catch (error) {
-                document.getElementById('rfps-container').innerHTML = 
-                    '<div class="no-rfps">Error loading RFPs. Please try again.</div>';
-            }
-        }
-
-        function displayStats(stats, recentCount) {
-            document.getElementById('total-rfps').textContent = stats.total_found || 0;
-            document.getElementById('states-monitored').textContent = stats.states_monitored || 0;
-            document.getElementById('recent-rfps').textContent = recentCount || 0;
-            document.getElementById('total-scans').textContent = stats.total_scans || 0;
-            document.getElementById('scan-duration').textContent = stats.last_scan_duration !== null ? stats.last_scan_duration : '-';
-        }
-
-        function displayRFPs(rfps) {
-            const container = document.getElementById('rfps-container');
-            if (rfps.length === 0) {
-                container.innerHTML = '<div class="no-rfps">No RFPs found yet. Click "Scan Now" to search for opportunities.</div>';
-                return;
-            }
-
-            const rfpsHtml = rfps.map(rfp => `
-                <div class="rfp-card">
-                    <div class="rfp-title">${rfp.title}</div>
-                    <div class="rfp-meta">
-                        📍 ${rfp.state} • 🏢 ${rfp.source} • 📅 ${new Date(rfp.found_date).toLocaleDateString()}
-                    </div>
-                    <div class="rfp-description">${rfp.description}</div>
-                    <div class="rfp-keywords">
-                        ${rfp.keywords_found.map(keyword => `<span class="keyword">${keyword}</span>`).join('')}
-                    </div>
-                    <a href="${rfp.url}" target="_blank" class="rfp-link">View Opportunity &rarr;</a>
-                </div>
-            `).join('');
-
-            container.innerHTML = `<div class="rfps-grid">${rfpsHtml}</div>`;
-        }
-        
-        function displayLastUpdated(lastUpdated) {
-            const lastUpdatedElement = document.getElementById('last-updated');
-            if (lastUpdated) {
-                const date = new Date(lastUpdated);
-                lastUpdatedElement.textContent = `Last data refresh: ${date.toLocaleString()}`;
-            } else {
-                lastUpdatedElement.textContent = `Last data refresh: Never`;
-            }
-        }
-
-        async function manualScan() {
-            if (isScanning) {
-                return;
-            }
-            isScanning = true;
-            const scanBtn = document.getElementById('scan-btn');
-            const originalText = scanBtn.textContent;
-            scanBtn.textContent = 'Scanning...';
-            scanBtn.disabled = true;
-
-            try {
-                const response = await fetch('/api/scan');
-                const data = await response.json();
-                if (data.success) {
-                    alert(data.message);
-                    await loadRFPs(); 
-                } else {
-                    alert(data.message);
+        document.addEventListener('DOMContentLoaded', () => {
+            const scanNowBtn = document.getElementById('scan-now-btn');
+            const loadingSpinner = document.getElementById('loading-spinner');
+            
+            async function fetchData() {
+                try {
+                    const response = await fetch('/api/rfps');
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    const data = await response.json();
+                    displayStats(data.stats, data.rfps.length);
+                    displayRFPs(data.rfps);
+                } catch (error) {
+                    console.error('Error fetching data:', error);
+                    document.getElementById('rfps-container').innerHTML = 
+                        '<div class="no-rfps text-center py-10 text-gray-500">Error loading RFPs. Please try again.</div>';
                 }
-            } catch (error) {
-                alert('An error occurred during the scan.');
-            } finally {
-                scanBtn.textContent = originalText;
-                scanBtn.disabled = false;
-                isScanning = false;
             }
-        }
 
-        function refreshData() {
-            loadRFPs();
-        }
+            function displayStats(stats, recentCount) {
+                document.getElementById('total-rfps').textContent = stats.total_found || 0;
+                document.getElementById('states-monitored').textContent = stats.states_monitored || 0;
+                document.getElementById('recent-rfps').textContent = recentCount || 0;
+                
+                if (stats.last_scan) {
+                    const lastScanTime = new Date(stats.last_scan);
+                    document.getElementById('last-scan-time').textContent = lastScanTime.toLocaleString();
+                    document.getElementById('last-scan-duration').textContent = `Duration: ${stats.last_scan_duration}s`;
+                } else {
+                    document.getElementById('last-scan-time').textContent = 'N/A';
+                    document.getElementById('last-scan-duration').textContent = '';
+                }
+            }
 
-        document.addEventListener('DOMContentLoaded', loadRFPs);
+            function displayRFPs(rfps) {
+                const container = document.getElementById('rfps-container');
+                container.innerHTML = '';
+                
+                if (rfps.length === 0) {
+                    container.innerHTML = '<div class="no-rfps text-center py-10 text-gray-500">No RFPs found yet. Click "Scan Now" to search for opportunities.</div>';
+                    return;
+                }
+
+                const rfpsHtml = rfps.map(rfp => `
+                    <a href="${rfp.url}" target="_blank" class="block">
+                        <div class="rfp-card p-4 rounded-lg shadow hover:shadow-lg transition duration-300">
+                            <div class="flex justify-between items-center">
+                                <div class="rfp-title text-xl font-semibold text-gray-800">${rfp.title}</div>
+                                <div class="rfp-status">
+                                    <span class="status-active text-xs font-medium px-2 py-1 rounded-full">${rfp.status}</span>
+                                </div>
+                            </div>
+                            <div class="rfp-number text-gray-500 text-sm mt-1">RFP Number: ${rfp.rfp_number}</div>
+                            <div class="rfp-meta text-sm text-gray-500 mt-2">
+                                📍 ${rfp.state} • 🏢 ${rfp.source} • 📅 ${new Date(rfp.found_date).toLocaleDateString()}
+                            </div>
+                            <div class="rfp-description text-gray-600 mt-2 line-clamp-3">${rfp.description}</div>
+                            <div class="rfp-keywords flex flex-wrap gap-2 mt-3">
+                                ${rfp.keywords_found.map(keyword => `<span class="keyword text-xs font-medium px-2 py-1 rounded-full">${keyword}</span>`).join('')}
+                            </div>
+                        </div>
+                    </a>
+                `).join('');
+                
+                container.innerHTML = rfpsHtml;
+            }
+
+            scanNowBtn.addEventListener('click', async () => {
+                loadingSpinner.classList.remove('hidden');
+                document.getElementById('rfps-container').innerHTML = '';
+                try {
+                    const response = await fetch('/api/scan');
+                    const result = await response.json();
+                    if (result.success) {
+                        await fetchData(); // Fetch and display the new data
+                    } else {
+                        throw new Error(result.message);
+                    }
+                } catch (error) {
+                    console.error('Manual scan failed:', error);
+                    document.getElementById('rfps-container').innerHTML = 
+                        '<div class="no-rfps text-center py-10 text-gray-500">Error during scan. Please check the server logs.</div>';
+                } finally {
+                    loadingSpinner.classList.add('hidden');
+                }
+            });
+
+            // Initial data fetch
+            fetchData();
+        });
     </script>
 </body>
 </html>
