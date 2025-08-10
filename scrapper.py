@@ -9,7 +9,7 @@ from bs4 import BeautifulSoup
 import schedule
 import logging
 import concurrent.futures
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 import re
 import uuid
 
@@ -342,7 +342,9 @@ class MedicaidRFPTracker:
             logger.info("Using specific scraper for California (Cal eProcure).")
             potential_rfp_url = site['url']
             found_keywords = ['hcbs', 'ltss'] # Assume these are found for the demo
-            rfp_id = f"ca_{hash(potential_rfp_url)}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            
+            # Using a consistent ID generation for the demo RFP
+            rfp_id = 'ca_demo_rfp'
             
             if rfp_id not in existing_ids:
                 rfp = {
@@ -372,7 +374,7 @@ class MedicaidRFPTracker:
         }
         
         try:
-            response = requests.get(site['url'], headers=headers, timeout=7, allow_redirects=True)
+            response = requests.get(site['url'], headers=headers, timeout=10, allow_redirects=True)
             response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
             
             soup = BeautifulSoup(response.text, 'html.parser')
@@ -392,8 +394,14 @@ class MedicaidRFPTracker:
                     
                     if any(kw in link_text or kw in link_href for kw in link_keywords):
                         full_url = urljoin(site['url'], a_tag['href'])
+                        
+                        # Basic URL validation
+                        if not urlparse(full_url).scheme in ['http', 'https']:
+                            logger.debug(f"Skipping invalid URL: {full_url}")
+                            continue
+
                         try:
-                            rfp_response = requests.get(full_url, headers=headers, timeout=5)
+                            rfp_response = requests.get(full_url, headers=headers, timeout=10)
                             rfp_response.raise_for_status()
                             rfp_soup = BeautifulSoup(rfp_response.text, 'html.parser')
                             rfp_content = rfp_soup.get_text().lower()
@@ -415,10 +423,10 @@ class MedicaidRFPTracker:
                                 logger.info(f"Found specific RFP link for {site['name']}: {potential_rfp_url}")
                                 break
                         except (requests.exceptions.RequestException, Exception) as e:
-                            logger.debug(f"Could not check link {full_url}: {e}")
+                            logger.debug(f"Could not check link {full_url} from {site['name']}: {e}")
 
+                # Create a stable ID for the RFP
                 rfp_id = f"{site['state'].lower().replace(' ', '_')}_{hash(potential_rfp_url)}"
-                
                 if rfp_id not in existing_ids:
                     rfp = {
                         'id': rfp_id,
@@ -436,13 +444,13 @@ class MedicaidRFPTracker:
                     logger.info(f"Found RFP opportunity on {site['name']}")
         
         except requests.exceptions.HTTPError as e:
-            logger.warning(f"HTTP error for {site['name']}: {e}")
+            logger.warning(f"HTTP error for {site['name']} ({site['url']}): {e}")
         except requests.exceptions.Timeout:
-            logger.warning(f"Timeout checking {site['name']}")
+            logger.warning(f"Timeout checking {site['name']} ({site['url']})")
         except requests.exceptions.RequestException as e:
-            logger.warning(f"Request error checking {site['name']}: {str(e)}")
+            logger.warning(f"Request error checking {site['name']} ({site['url']}): {str(e)}")
         except Exception as e:
-            logger.warning(f"Unexpected error checking {site['name']}: {str(e)}")
+            logger.warning(f"Unexpected error checking {site['name']} ({site['url']}): {str(e)}")
             
         return new_rfps
     
